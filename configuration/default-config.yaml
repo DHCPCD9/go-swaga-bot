@@ -1,0 +1,7 @@
+
+discord:
+  token: ""
+  index-all-channels: true
+gemini:
+  token: ""
+  model: "gemini-2.0-flash"
