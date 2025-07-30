@@ -11,7 +11,7 @@ services:
       - default
     depends_on:
       - db
-    db:
+  db:
       image: postgres:17-alpine
       container_name: postgres
       restart: unless-stopped
