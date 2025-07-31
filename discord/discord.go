@@ -210,7 +210,7 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 				}
 				baseText += fmt.Sprintf("\n- %s", activity.Name)
 				if activity.State != "" {
-					baseText += fmt.Sprintf(" - [%s]", activity.State)
+					baseText += fmt.Sprintf(" - [%s] - [%s]", activity.State, activity.Details)
 				}
 
 			}
