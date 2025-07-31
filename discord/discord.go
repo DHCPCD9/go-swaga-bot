@@ -77,6 +77,7 @@ func handleReady(s *discordgo.Session, event *discordgo.Ready) {
 								break
 							}
 
+							indexedMessages := make([]database.IndexedMessages, 0, len(messages))
 							for _, message := range messages {
 								indexedMessage := database.IndexedMessages{
 									MessageID:   message.ID,
@@ -90,13 +91,14 @@ func handleReady(s *discordgo.Session, event *discordgo.Ready) {
 									Username:    message.Author.Username,
 								}
 
-								if err := database.Pool.Create(&indexedMessage).Error; err != nil {
-									log.Errorf("Failed to index message %s in channel %s: %v", message.ID, channel.Name, err)
-								} else {
-									log.Infof("Indexed message %s in channel %s", message.ID, channel.Name)
-								}
+								indexedMessages = append(indexedMessages, indexedMessage)
 							}
 
+							if err := database.Pool.Create(&indexedMessages).Error; err != nil {
+								log.Errorf("Failed to index %d messages in channel %s: %v", len(indexedMessages), channel.Name, err)
+							} else {
+								log.Infof("Indexed message %d messages in channel %s", len(indexedMessages), channel.Name)
+							}
 							beforeId = messages[len(messages)-1].ID
 							log.Infof("Indexed %d messages in channel %s", len(messages), channel.Name)
 							if len(messages) < 100 {
