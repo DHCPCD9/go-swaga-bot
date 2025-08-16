@@ -2,7 +2,10 @@ package discord
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/DHCPCD9/go-swaga-bot/configuration"
 	"github.com/DHCPCD9/go-swaga-bot/database"
@@ -51,68 +54,6 @@ func handleReady(s *discordgo.Session, event *discordgo.Ready) {
 	var count int64
 	database.Pool.Model(&database.IndexedMessages{}).Count(&count)
 	log.Infof("Indexed %d messages in the database", count)
-
-	if configuration.Config.Discord.IndexAllChannels && count == 0 {
-		for _, guild := range s.State.Guilds {
-
-			log.Infof("Indexing all channels in guild: %s (%s)", guild.Name, guild.ID)
-			if channels, err := s.GuildChannels(guild.ID); err != nil {
-				log.Errorf("Failed to get channels for guild %s: %v", guild.Name, err)
-				continue
-			} else {
-				for _, channel := range channels {
-					if channel.Type == discordgo.ChannelTypeGuildText {
-						log.Infof("Indexing channel: %s (%s)", channel.Name, channel.ID)
-
-						beforeId := ""
-						for {
-							messages, err := s.ChannelMessages(channel.ID, 100, beforeId, "", "")
-							if err != nil {
-								log.Errorf("Failed to get messages for channel %s: %v", channel.Name, err)
-								break
-							}
-
-							if len(messages) == 0 {
-								log.Infof("No more messages to index in channel %s", channel.Name)
-								break
-							}
-
-							indexedMessages := make([]database.IndexedMessages, 0, len(messages))
-							for _, message := range messages {
-								indexedMessage := database.IndexedMessages{
-									MessageID:   message.ID,
-									Content:     message.Content,
-									ChannelID:   channel.ID,
-									ChannelName: channel.Name,
-									GuildID:     guild.ID,
-									GuildName:   guild.Name,
-									CreatedAt:   message.Timestamp.Unix(),
-									AuthorID:    message.Author.ID,
-									Username:    message.Author.Username,
-								}
-
-								indexedMessages = append(indexedMessages, indexedMessage)
-							}
-
-							if err := database.Pool.Create(&indexedMessages).Error; err != nil {
-								log.Errorf("Failed to index %d messages in channel %s: %v", len(indexedMessages), channel.Name, err)
-							} else {
-								log.Infof("Indexed message %d messages in channel %s", len(indexedMessages), channel.Name)
-							}
-							beforeId = messages[len(messages)-1].ID
-							log.Infof("Indexed %d messages in channel %s", len(messages), channel.Name)
-							if len(messages) < 100 {
-								log.Infof("No more messages to index in channel %s", channel.Name)
-								break
-							}
-						}
-					}
-				}
-			}
-
-		}
-	}
-
 }
 
 func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -157,20 +98,27 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 	}
 
+	// 	{
+	//     "user_id": <userId>,
+	//     "username": <username>,
+	//     "known_names": ["name1", "name2"],
+	//     "activities": [
+	//         {
+	//             "activity": "<activity_name>",
+	//             "state": "<activity_state>",
+	//             "substate": "<activity_substate>"
+	//         }
+	//     ],
+	//     "facts": ["fact1", "fact2"],
+	//     "text": "<text>",
+	//     "reference": <reference_id>,
+	//     "references": [{"id": <id>, "text": "text", "user": <user_id>}],
+	//     "reference_users": [{"id": <user_id>, "username": "<username>", "known_names": ["name1", "name2"], "facts": ["fact1", "fact2"]}],
+	// }
 	if isMeMentioned && m.Author.ID != s.State.User.ID {
 		s.ChannelTyping(m.ChannelID)
 
 		parts := gemini.BuildParts()
-		/**
-		  ```
-		  <@userId> Activities <count>:
-		<activity1> - [activity1-state]
-		<activity2>
-		  <@userId> Asked: <text>
-		  [with reference: (text)]
-		  ```
-
-		*/
 
 		for _, attachment := range m.Attachments {
 			// if attachment.ContentType != "" && strings.HasPrefix(attachment.ContentType, "image/") {
@@ -193,7 +141,40 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 			// }
 		}
 
-		baseText := fmt.Sprintf("<@%s> Asked: %s", m.Author.ID, m.Content)
+		// baseText := fmt.Sprintf("<@%s> Asked: %s", m.Author.ID, m.Content)
+		var dbUser database.KnownUsers
+		parsedID, _ := strconv.Atoi(m.Author.ID)
+
+		var facts []database.UserFact
+		var names []database.UserName
+
+		database.Pool.First(&dbUser, "id = ?", parsedID)
+		database.Pool.Find(&facts, "user_id = ?", parsedID)
+		database.Pool.Find(&names, "user_id = ?", parsedID)
+		basePrompt := gemini.PromptJson{
+			UserID:     m.Author.ID,
+			Username:   m.Author.Username,
+			Text:       m.Content,
+			KnownNames: database.NamestToStrings(names),
+			Activities: make([]struct {
+				Activity string "json:\"activity\""
+				State    string "json:\"state\""
+				Substate string "json:\"substate\""
+			}, 0),
+			Facts:     database.FactsToStrings(facts),
+			Reference: m.Reference().MessageID,
+			References: make([]struct {
+				ID   string "json:\"id\""
+				Text string "json:\"text\""
+				User string "json:\"user\""
+			}, 0),
+			ReferenceUsers: make([]struct {
+				ID         string   "json:\"id\""
+				Username   string   "json:\"username\""
+				KnownNames []string "json:\"known_names\""
+				Facts      []string "json:\"facts\""
+			}, 0),
+		}
 
 		presences, err := s.State.Presence(m.GuildID, m.Author.ID)
 
@@ -203,16 +184,24 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 
 		if presences != nil {
-			baseText += fmt.Sprintf("Activities %d:", len(presences.Activities))
+			basePrompt.Activities = make([]struct {
+				Activity string "json:\"activity\""
+				State    string "json:\"state\""
+				Substate string "json:\"substate\""
+			}, 0)
 			for _, activity := range presences.Activities {
 				if activity.Name == "" {
 					continue
 				}
-				baseText += fmt.Sprintf("\n- %s", activity.Name)
-				if activity.State != "" {
-					baseText += fmt.Sprintf(" - [%s] - [%s]", activity.State, activity.Details)
-				}
-
+				basePrompt.Activities = append(basePrompt.Activities, struct {
+					Activity string "json:\"activity\""
+					State    string "json:\"state\""
+					Substate string "json:\"substate\""
+				}{
+					Activity: activity.Name,
+					State:    activity.State,
+					Substate: activity.Details,
+				})
 			}
 		}
 
@@ -223,32 +212,49 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 			if err != nil {
 				log.Errorf("Failed to get presence for user %s: %v", mention.ID, err)
 			}
+
+			var dbUser database.KnownUsers
+			database.Pool.First(&dbUser, "id = ?", mention.ID)
+
+			var facts []database.UserFact
+			var names []database.UserName
+
+			database.Pool.Find(&facts, "user_id = ?", mention.ID)
+			database.Pool.Find(&names, "user_id = ?", mention.ID)
 			if presences != nil {
-				baseText += fmt.Sprintf("\n<@%s> Activities %d:", mention.ID, len(presences.Activities))
-				for _, activity := range presences.Activities {
-					if activity.Name == "" {
-						continue
-					}
-					baseText += fmt.Sprintf("\n- %s", activity.Name)
-					if activity.State != "" {
-						baseText += fmt.Sprintf(" - [%s]", activity.State)
-					}
-				}
+				basePrompt.ReferenceUsers = append(basePrompt.ReferenceUsers, struct {
+					ID         string   "json:\"id\""
+					Username   string   "json:\"username\""
+					KnownNames []string "json:\"known_names\""
+					Facts      []string "json:\"facts\""
+				}{
+					ID:         mention.ID,
+					Username:   mention.Username,
+					KnownNames: database.NamestToStrings(names),
+					Facts:      database.FactsToStrings(facts),
+				})
+			} else {
+				basePrompt.ReferenceUsers = append(basePrompt.ReferenceUsers, struct {
+					ID         string   "json:\"id\""
+					Username   string   "json:\"username\""
+					KnownNames []string "json:\"known_names\""
+					Facts      []string "json:\"facts\""
+				}{
+					ID:         mention.ID,
+					Username:   mention.Username,
+					KnownNames: make([]string, 0),
+					Facts:      make([]string, 0),
+				})
 			}
 		}
 
-		if m.ReferencedMessage != nil {
-			// parts.Parts = append(parts.Parts, gemini.Parts{Text: fmt.Sprintf("<@%s> Asked: %s [with reference: %s]", m.Author.ID, m.Content, m.ReferencedMessage.Content)})
-			baseText += fmt.Sprintf("<@%s> Asked: %s [with reference: %s]", m.Author.ID, m.Content, m.ReferencedMessage.Content)
-		} else {
-			// parts.Parts = append(parts.Parts, gemini.Parts{Text: fmt.Sprintf("<@%s> Asked: %s", m.Author.ID, m.Content)})
-		}
+		// baseText += "[Attachment from part above]"
 
-		baseText += "[Attachment from part above]"
+		var marshaledBasePrompt []byte
+		marshaledBasePrompt, err = json.Marshal(basePrompt)
+		log.Debug("Base text for Gemini request: ", string(marshaledBasePrompt))
 
-		log.Debug("Base text for Gemini request: ", baseText)
-
-		parts.Parts = append(parts.Parts, gemini.Parts{Text: baseText, InlineData: nil})
+		parts.Parts = append(parts.Parts, gemini.Parts{Text: string(marshaledBasePrompt), InlineData: nil})
 
 		body := gemini.BuildBody([]gemini.Contents{*parts})
 
@@ -272,7 +278,36 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 			//Answering the first candidate
 			answer := response.Candidates[0].Content.Parts[0].Text
 
-			if _, err := s.ChannelMessageSendReply(m.ChannelID, answer, m.Reference()); err != nil {
+			answer = strings.TrimLeft(answer, "```json")
+			answer = strings.TrimRight(answer, "```")
+			var parsedAnswer gemini.ResponseJson
+			if err = json.Unmarshal([]byte(answer), &parsedAnswer); err != nil {
+				if _, err := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to process message: %s", err.Error()), m.Reference()); err != nil {
+					log.Errorf("Failed to send message to channel %s: %v", m.ChannelID, err)
+				} else {
+					log.Infof("Sent response to channel %s: %s", m.ChannelID, answer)
+				}
+				return
+			}
+
+			for _, username := range parsedAnswer.Usernames {
+				if username.Type == "add" {
+					parsed, _ := strconv.Atoi(username.User)
+					database.AddUsername(uint64(parsed), username.Username)
+				}
+			}
+
+			for _, fact := range parsedAnswer.Facts {
+				parsed, _ := strconv.Atoi(fact.User)
+
+				if fact.Type == "add" {
+					database.AddFact(uint64(parsed), fact.Fact)
+				} else {
+					database.RemoveFact(uint64(parsed), fact.Fact)
+				}
+			}
+
+			if _, err := s.ChannelMessageSendReply(m.ChannelID, parsedAnswer.Response, m.Reference()); err != nil {
 				log.Errorf("Failed to send message to channel %s: %v", m.ChannelID, err)
 			} else {
 				log.Infof("Sent response to channel %s: %s", m.ChannelID, answer)
