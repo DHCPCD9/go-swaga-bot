@@ -12,8 +12,9 @@ import (
 var DEFAULT_CONFIG string
 
 type GlobalConfiguration struct {
-	Discord Discord `yaml:"discord"`
-	Gemini  Gemini  `yaml:"gemini"`
+	Discord  Discord  `yaml:"discord"`
+	Gemini   Gemini   `yaml:"gemini"`
+	Database Database `yaml:"database"`
 }
 type Discord struct {
 	Token            string `yaml:"token"`
@@ -22,6 +23,11 @@ type Discord struct {
 type Gemini struct {
 	Token string `yaml:"token"`
 	Model string `yaml:"model"`
+}
+
+type Database struct {
+	Type string `yaml:"type"`
+	Url  string `yaml:"url"`
 }
 
 var Config *GlobalConfiguration

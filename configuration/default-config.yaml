@@ -5,3 +5,6 @@ discord:
 gemini:
   token: ""
   model: "gemini-2.0-flash"
+database:
+  type: "sqlite" # sqlite | postgres
+  url: "database.db" # database.db | host=db user=postgres password=postgres dbname=bot_db sslmode=disable

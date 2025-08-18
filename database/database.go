@@ -1,8 +1,10 @@
 package database
 
 import (
+	"github.com/DHCPCD9/go-swaga-bot/configuration"
 	"github.com/glebarez/sqlite"
 	log "github.com/sirupsen/logrus"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -44,9 +46,19 @@ type IndexedMessages struct {
 }
 
 func InitDatabase() error {
-	db, err := gorm.Open(sqlite.Open("database.db"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
-	})
+
+	var db *gorm.DB
+	var err error
+
+	if configuration.Config.Database.Type == "sqlite" {
+		db, err = gorm.Open(sqlite.Open(configuration.Config.Database.Url), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Info),
+		})
+	} else {
+		db, err = gorm.Open(postgres.Open(configuration.Config.Database.Url), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Info),
+		})
+	}
 
 	if err != nil {
 		log.Errorf("error opening database: %v", err)
