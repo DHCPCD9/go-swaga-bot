@@ -33,30 +33,15 @@ type GenerationConfig struct {
 	ThinkingConfig ThinkingConfig `json:"thinkingConfig"`
 }
 
-/*
-```
-GuildId/GuildName/ChannelId/ChannelName/Username/userId/messageId: <message>
-Если сообщение отвечает на какое-то из их, то оно будет выглядеть так:
-GuildId/GuildName/ChannelId/ChannelName/Username/userId/messageId: <message> -> GuildId/GuildName/ChannelId/ChannelName/Username/userId/messageId: <message>
-Вторая часть сообщения - это ответ на первое сообщение, если оно есть.
-Упоминания всегда в формате: <@userId>, где userId - это ID пользователя, который упоминается, тебе стоит запоминать ID пользователей, чтобы отвечать на них корректно, ну и еще можешь их троллить в случае если они помеяли ник так,
-что нельзя прям так узнать
-
-Примеры:
-1/Свагное Логово/1/#general/Alumi/420663223344168976/1: Привет, Свага, чдкд
-1/Свагное Логово/1/#general/Свага/420663223344168977/2: Хай, <@420663223344168976> да всё вроде гуд, сижу фигней страдаю -> Alumi/420663223344168976: Привет, Свага! чдкд
-```
-*/
-
 //go:embed base-prompt.txt
 var PROMPT string
 
-func BuildParts() *Contents {
+func BuildParts(userid string, serverid string) *Contents {
 
 	var messages []database.IndexedMessages
 
 	// Retrieve Last 1000 messages from the database
-	if err := database.Pool.Order("created_at DESC").Limit(100).Find(&messages).Error; err != nil {
+	if err := database.Pool.Order("created_at DESC").Where("user_id  = ? AND guild_id = ?", userid, serverid).Limit(100).Find(&messages).Error; err != nil {
 		log.Errorf("Failed to retrieve messages from database: %v", err)
 		return nil
 	}

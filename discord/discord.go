@@ -118,7 +118,7 @@ func handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if isMeMentioned && m.Author.ID != s.State.User.ID {
 		s.ChannelTyping(m.ChannelID)
 
-		parts := gemini.BuildParts()
+		parts := gemini.BuildParts(m.Author.ID, m.GuildID)
 
 		for _, attachment := range m.Attachments {
 			// if attachment.ContentType != "" && strings.HasPrefix(attachment.ContentType, "image/") {

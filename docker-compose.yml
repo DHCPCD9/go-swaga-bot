@@ -1,17 +1,5 @@
-version: '3'
-
 services:
-  gemini:
-    build: .
-    container_name: discord-bot
-    restart: unless-stopped
-    volumes:
-      - ./config.yml:/app/config.yml
-    networks:
-      - default
-    depends_on:
-      - db
-  db:
+    db:
       image: postgres:17-alpine
       restart: unless-stopped
       environment:
@@ -23,11 +11,23 @@ services:
       networks:
         - default
       healthcheck:
-        test: ["CMD", "pg_isready", "-U", "postgres"]
+        test: ["CMD-SHELL", "pg_isready"]
         interval: 30s
         timeout: 10s
         retries: 5
-
+        start_period: 5s
+    gemini:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      restart: always
+      volumes:
+        - ./config.yml:/app/config.yml
+      networks:
+        - default
+      depends_on:
+        db:
+          condition: service_healthy
 networks:
   default:
     driver: bridge
