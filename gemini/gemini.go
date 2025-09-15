@@ -41,7 +41,7 @@ func BuildParts(userid string, serverid string) *Contents {
 	var messages []database.IndexedMessages
 
 	// Retrieve Last 1000 messages from the database
-	if err := database.Pool.Order("created_at DESC").Where("user_id  = ? AND author_id = ?", userid, serverid).Limit(100).Find(&messages).Error; err != nil {
+	if err := database.Pool.Order("created_at DESC").Where("author_id = ? AND guild_id = ?", userid, serverid).Limit(100).Find(&messages).Error; err != nil {
 		log.Errorf("Failed to retrieve messages from database: %v", err)
 		return nil
 	}
